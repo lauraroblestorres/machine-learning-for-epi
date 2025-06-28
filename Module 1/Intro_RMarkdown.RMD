@@ -1,0 +1,109 @@
+---
+title: "Demonstration of R Markdown"
+author: "JAS"
+output:
+  word_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## R Markdown Demonstration using Breast Imaging Data
+Data Citation: This breast cancer database was obtained from the University of Wisconsin Hospitals, Madison from Dr. William H. Wolberg.
+See Machine learning techniques to diagnose breast cancer from image-processed nuclear features of fine needle aspirates. Cancer Letters 1994; 77:163-171.
+
+***
+
+### Step 1: Load Packages
+We will be using two packages in addition to base R.
+Amelia is for missing data and will provide us with a plot of missingness.
+Tidyverse includes a number of packages used for data management.
+
+```{r packages}
+
+#install.packages("tidyverse")
+
+library(Amelia)
+library(tidyverse)
+library(here)
+```
+### Step 2: Load Data into R Environment and Perform Data Cleaning
+#### Illustrates the following:
+1. How to load a flat text file with no column headers
+2. How to assign column names when none are provided
+3. How to check variable types across the dataframe
+4. How to recode missing indicators, change variable types and explore variable distributions
+5. Create a quick plot to indicate missingness
+6. Create a quick and dirty plot to compare features across outcome levels
+
+```{r data_prepare}
+
+#1. Replace file path to location of data file
+bc.data =
+  read_csv(here("./breast-cancer-wisconsin.data.txt"), col_names = FALSE) |>
+  set_names(c("id", "clump_thickness", "uniformity_csize", "uniformity_cshape",
+              "marg_adhesion", "single_ecell_size", "bare_nuclei",
+              "b_chromatin", "normal_nucleoli", "mitoses", "outcome")) #2. Create vector of column names and append as column headers
+
+#3. Check variable types: See that one is character even though all should be numeric. This is because a character "?" was used as the missing data indicator
+str(bc.data)
+
+#4. Replace the ? missing data indicator with NA, convert to numeric
+bc.data_clean =
+  bc.data |>
+  mutate(
+    bare_nuclei = if_else(bare_nuclei == "?", NA, bare_nuclei),
+    bare_nuclei = as.numeric(bare_nuclei),
+    outcome = factor(outcome, levels = c(2, 4), labels = c("Benign", "Malignant"))
+)  #Convert outcome to factor and add appropriate labels
+
+# Get quick summary of columns
+summary(bc.data_clean)
+
+#5. Quick visualization of missingness
+missmap(bc.data_clean, main = "Missing values vs observed")
+
+#6. Use ggplot to obtain a boxplot of feature by outcome
+ggplot(bc.data_clean, aes(y=clump_thickness, x=outcome)) +  #Clump Thickness
+  geom_boxplot()+
+  theme_classic()
+
+ggplot(bc.data_clean, aes(y=uniformity_csize, x=outcome)) +  #Uniformity size
+  geom_boxplot()+
+  theme_classic()
+
+ggplot(bc.data_clean, aes(y=uniformity_cshape, x=outcome)) +  #Uniformity shape
+  geom_boxplot()+
+  theme_classic()
+
+```
+
+### Step 3: Construct logistic regression models to predict Malignancy
+
+* Model 1: Include all features except ID
+* Model 2: Include only clump thickness
+
+```{r}
+#Model 1: Using all features
+bc.data_clean$id<-NULL #Setting ID variable to null
+
+model.1 = 
+  bc.data_clean |>
+  glm(formula=outcome ~ ., family = binomial(link = 'logit'))
+
+summary(model.1)
+
+#Model 2: Specifying some features
+model.2 =
+  bc.data_clean |>
+  glm(formula=outcome ~ clump_thickness, family = binomial(link = 'logit'))
+
+summary(model.2)
+```
+
+

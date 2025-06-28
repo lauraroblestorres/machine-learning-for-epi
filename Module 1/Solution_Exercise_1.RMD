@@ -1,0 +1,113 @@
+---
+title: "Solution for Exercise 1"
+author: "JAS"
+date: 
+output:
+  html_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Solution for Module 1, Exercise 1
+
+This is one potential solution. Depending upon the variables/features you included, your results may appear different. 
+
+### Load Needed Packages
+
+```{r}
+library(Amelia)
+library(tidyverse)
+library(magrittr)
+
+```
+
+### Load data and examine values. Remove any missing codes 
+
+```{r data_prep}
+setwd("C:/Users/js5406/OneDrive - cumc.columbia.edu/EPIC Course/2024")
+
+breastcancer.data<-read.csv("./data/breast-cancer.data.txt", header=FALSE)
+
+var.names<-c("outcome", "age", "age_menopause", "tumorsz", "num_auxnodes", "nodes_capsule", "degree_malig", "site_breast", "site_area", "rad_trt")
+
+colnames(breastcancer.data)<-var.names
+
+summary(breastcancer.data)
+str(breastcancer.data)
+missmap(breastcancer.data)
+
+
+#Note features are character and we want them to be factor (Using tidyverse notation and assignment pipe)
+cols<-c("outcome", "age", "age_menopause", "tumorsz", "num_auxnodes", "nodes_capsule", "site_breast", "site_area", "rad_trt")
+breastcancer.data %<>% mutate_at(cols, factor)
+
+#set the reference level of your outcome variable
+breastcancer.data$outcome<-relevel(breastcancer.data$outcome, ref="no-recurrence-events")
+
+#Examine distributions of variables
+summary(breastcancer.data)
+
+#Note that there are ? to indicate missing data. We need to remove these. Using factor function will drop the ? factor level that was associated with ?.
+breastcancer.data[breastcancer.data=="?"]<-NA
+
+breastcancer.data$nodes_capsule<-droplevels(breastcancer.data$nodes_capsule)
+breastcancer.data$site_area<-droplevels(breastcancer.data$site_area)
+
+#Examine distributions of variables
+summary(breastcancer.data)
+str(breastcancer.data)
+
+```
+
+### Create new variable
+
+There are many ways to collapse a factor variable to have fewer levels. I'm just illustrating one option where I change the variable but keep the same variable name.
+
+```{r newvars}
+
+breastcancer.data <- breastcancer.data %>%
+  mutate(num_auxnodes = fct_collapse(num_auxnodes,
+                                     "0-2" = "0-2",
+                                     "3-8" = c("3-5", "6-8"),
+                                     "More than 8" = c("9-11", "12-14", "15-17", "24-26")))
+
+
+```
+
+### Construct logistic regression models to predict Recurrence
+I will be creating two models. First, I will construct a model with all of the features. Then, I'm choosing to include only variables that do not require clinical decision making. That is, the use of radiation treatment and the clinical score of malignancy require human decision-making. I'm excluding those to see what level of prediction I can get from just measures of the tumor and demographics alone. 
+* Model 1: All features
+* Model 2: Exclude node malignancy and radiation treatment 
+
+```{r logitmodels}
+logistic_model.1 =
+  breastcancer.data %>% 
+  
+  glm(
+    outcome ~ .,
+    data = .,
+    family = binomial
+  ) 
+summary(logistic_model.1)
+
+logistic_model.2 =
+  breastcancer.data %>% 
+  
+  glm(
+    outcome ~ age+age_menopause+tumorsz+num_auxnodes+nodes_capsule+site_breast+site_area,
+    data = .,
+    family = binomial
+  ) 
+summary(logistic_model.2)
+
+```
+
+
+### Considerations Question: Are there variables you want to exclude prior to conducting your analysis?
+
+As mentioned above, I think it's worth considering the value of including variables that rely on clinicians' decisions when trying to build a clinical support tool. If the goal is to try to predict recurrence as a way to help advise clinical decisions, one needs to consider when this support tool would be used: immediately after diagnosis, after initial treatment decisions have been made, or at some other time? What if someone wanted to use this tool immediately after diagnosis, the information on receipt of radiation treatment wouldn't be available. Then, what value is the tool? Once can consider what information goes into the clinical degree of malignancy or the receipt of radiation treatment. Perhaps that clinical information could be directly input into the algorithm. Do you have different thoughts? Feel free to create a post in the discussion board to start a conversation.
