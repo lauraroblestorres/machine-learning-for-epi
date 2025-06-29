@@ -1,0 +1,394 @@
+---
+title: "CaRT Demonstration"
+author: "JAS"
+date: "null"
+output:
+  html_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Demonstration of Classification and Regression Trees (CaRT) using R
+
+This demonstration of classification and regression trees (CaRT) will utilize the 2019 County Health Rankings. The rankings provide data on a number of demographic, social and environmental health characteristics for counties in the United States. We will be using this dataset to address two research questions. 
+
+1. What are the predictors of life expectancy on a county-level?
+
+2. Imagine a scenario where the maintainers of the CHR were concerned that the data on firearm fatalities would no longer be made public. This information has been use by a number of foundations to target population-based interventions at reducing gun violence. They are wondering if the counties with higher proportions of firearm fatalities would still be able to be identified, based on the other data within the CHR. That is, can the other data in the CHR be used to classify counties according to having higher or lower firearm_fatalities?
+
+The first question will be addressed with a regression tree, while the second will be addressed with a classification tree.
+
+***
+
+### Load needed packages
+
+We will be using two different packages: rpart and caret. Both of these packages allow us to construct classification and regression trees, but they have different levels of functionality. Also loading rpart.plot which makes cleaner looking plots of the trees.
+
+```{r load_packages}
+library(tidyverse)
+library(rpart)
+library(caret)
+library(rpart.plot)
+library(pROC)
+library(kernlab)
+library(here)
+
+```
+
+### Load and check data
+
+Variable names in the original dataset were not informative, so we need to append our own as column names. We also need to strip off the Id variable for easier processing. We're also going to look at some basic descriptives of the data to determine if it needs cleaning, imputation of missing data, etc.
+
+```{r data_prep}
+set.seed(123)
+
+#Path where datasets are stored are stored as working directory
+chr<-read.csv(here("./Module 3/chr.csv"))
+
+#Strip off ID Variable
+chr<-chr[,2:68]
+
+#Add informative feature names
+var.names<-c("pre_death", "poorhealth", "poorphyshealth_days", "poormenthealth_days", "low_bwt", "ad_smoking", "ad_obesity", "foodenv_index", "phys_inactivity", "exer_access", "excess_drink", "alc_drivdeaths", "sti", "teen_birth", "uninsured", "primcareproviders", "dentists", "menthealthproviders", "prevhosp", "mammo_screen", "flu_vacc", "hsgrad", "somecollege", "unemployed", "child_poverty", "income_ineq", "sing_parent", "social_assoc", "violent_crime", "injury_deaths", "pm_air", "water_viol", "housing_prob", "driving_alone", "long_commute", "life_exp", "age_adj_premortality", "freq_physdistress", "freq_mentdistress", "diabetes", "hiv", "food_insecure", "ltd_access_healthyfood", "mvcrash_deaths", "insuff_sleep", "uninsured_adults", "uninsured_child", "other_pcp", "medhhinc", "freelunch_child", "res_seg_bw", "res_seg_nw", "firearm_fatalities", "homeownership", "hous_cost_burden", "population", "bw18", "gte65", "nonhisp_afam", "AmerInd_AlasNative", "Asian", "OPacIslander", "Hisp", "nonhisp_white", "nonprof_english", "female", "rural")
+
+colnames(chr)<-var.names
+
+#Stripping off premature mortality and premature death as they are different metrics of mortality 
+chr$age_adj_premortality<-NULL
+chr$pre_death<-NULL
+
+#Will identify any rows that do not have complete cases (i.e. have missing data); these data have no missing values
+miss.rows<-chr[!complete.cases(chr),]
+
+
+#Create the variable for Part 2, an indicator of having fire-arm fatalities above the median
+
+chr =
+  chr |>
+  mutate(
+    firearm.class = factor(if_else(firearm_fatalities > median(firearm_fatalities), 1, 0)))
+
+summary(chr$firearm.class)
+#Note that data are slightly unbalanced.
+
+```
+
+### Partition data into training and testing sets for different questions
+
+```{r datapart}
+
+set.seed(123)
+
+#tidyverse way to create data partition For Q1
+train.indices =
+  chr |>
+  pull(life_exp) |>
+  createDataPartition(p = 0.7, list = FALSE)
+
+train.data.q1 <- chr |>
+  slice(train.indices)
+
+test.data.q1 <- chr |>
+  slice(-train.indices)
+
+#Remove firearm.class variable as its only used for Question 2
+train.data.q1$firearm.class<-NULL
+test.data.q1$firearm.class<-NULL
+
+#Base R way For Q2
+train.indices.2<-createDataPartition(y=chr$firearm.class,p=0.7,list=FALSE)
+train.data.q2<-chr[train.indices.2, ]
+test.data.q2<-chr[-train.indices.2, ]
+
+#Remove firearm fatalities variable as it was used to create our new outcome variable
+train.data.q2$firearm_fatalities<-NULL
+test.data.q2$firearm_fatalities<-NULL
+
+```
+
+### PART 1: REGRESSION TREES (Q1)
+
+We will create a number of regression trees to predict life expectancy. Caret calls to rpart, but doesn't have the same level of hyperparameter turning as rpart. In caret, you can only change cp the complexity parameter. In addition, caret automatically performs pruning (whereas in rpart you, by default, can see the full tree.)
+
+From within caret, you can still visualize the tree and get measures of variable importance. 
+
+Variable Importance: "An overall measure of variable importance is the sum of the goodness of split measures for each split for which it was the primary variable."
+
+
+```{r regtree}
+modelLookup("rpart")
+
+set.seed(123)
+
+#Using 10-fold cross-validation to train model
+train.control<-trainControl(method="cv", number=10)
+
+#Using rpart method to generate regression tree, using all variables in dataset to predict life expectancy
+tree.lifexp.1<-train(
+                      life_exp~ . , 
+                      data=train.data.q1, 
+                      method="rpart",
+                      trControl=train.control
+                      )
+
+tree.lifexp.1$bestTune #cp=0.0731
+tree.lifexp.1$results #only tried 3 values
+
+#Can use rpart.plot function to visualize tree
+tree.lifexp.1$finalModel %>%
+  rpart.plot()
+
+
+#Specify tuneGrid so caret explores wider variety of cp-values
+set.seed(123) 
+
+#Create different values of cp to try
+
+cp.grid<-expand.grid(cp=seq(0.001,0.1, by=0.001))
+
+tree.lifexp.2<-train(
+                     life_exp ~ ., 
+                     data=train.data.q1, 
+                     method="rpart", 
+                     trControl=train.control, 
+                     tuneGrid=cp.grid
+                     )
+
+plot(tree.lifexp.2, uniform=TRUE)
+tree.lifexp.2$bestTune
+tree.lifexp.2$results
+
+#Plot new "best" tree
+tree.lifexp.2$finalModel %>%
+  rpart.plot()
+
+#Example variable importance in model
+varImp(tree.lifexp.2)
+
+#Make final predictions in test set using optimal model
+model.pred <- tree.lifexp.2 %>% 
+              predict(test.data.q1)
+
+# Model prediction performance
+postResample(model.pred,test.data.q1$life_exp)
+
+```
+
+### PART 2 CLASSIFICATION TREES (Q2): Can we predict if a county is above or below the median for firearm fatalities based on all of the other features of my data? 
+
+```{r classtree}
+
+set.seed(123)
+
+#Creating 10-fold cross-validation and using down-sampling because of imbalance in data
+train.control.class<-trainControl(method="cv", number=10, sampling="down")
+
+#Create sequence of cp parameters to try 
+grid.2<-expand.grid(cp=seq(0.001, 0.3, by=0.01)) 
+
+#Train model
+tree.firearm<-train(
+                      firearm.class~., #using new firearm outcome we created. this is a factor
+                      data=train.data.q2, 
+                      method="rpart", #rpart knows to do class tree and not regression tree bc its a factor
+                      trControl=train.control.class, 
+                      tuneGrid=grid.2
+                      )
+
+tree.firearm$bestTune
+tree.firearm
+
+tree.firearm$finalModel |>
+  rpart.plot()
+
+#The top is the root node: it is 0 because the majority class at root node is 0: meaning lower than the median.
+#The second number tells us which proportion of our data is our target class of 1. 
+#Only 26% of that child node has the target. The greater your life expectancy, the less likely you are to have higher than median firearm fatality. Majority class here is being lower than median. The proportion with the target is 26% and 45% of the data is in that node.
+#The other child node is saying the majority of the class is above the median. 70% is above the median. 
+
+#Note you can obtain variable importance on the final model within training data
+varImp(tree.firearm)
+
+##Remember that features in your surrogate split may be found in the VIF but not in the tree itself. A feature not in your tree can be "more important" related to the surrogate split.
+
+#Note you can get accuracy metric and confusion matrix from training.
+confusionMatrix(tree.firearm)
+    #Overall acc: 0.766
+    #Pretty good with the yes' vs the nos. 
+
+#Create predictions in test set
+pred.firearm <- tree.firearm |>
+              predict(test.data.q2)
+
+eval.results<-confusionMatrix(pred.firearm, test.data.q2$firearm.class, positive = "1") #put that into the confusion matrix with the og observed data
+print(eval.results)
+
+    #Sensitivity is higher than the specificity. 
+
+#Create predictions as probabilities on test set. We are going to look at the area under the ROC. We can get predicted probabilities out of the tree-based model.
+pred.firearm.prob <- tree.firearm %>% 
+  predict(test.data.q2, type = "prob")
+
+#With those probabilities, you create the ROC 
+#Another potential evaluation: Area under the Receiver Operating Curve (AUROC)
+analysis <- roc(response=
+                  test.data.q2$firearm.class, 
+                  predictor=pred.firearm.prob[,2]) #get a list
+
+plot(1-analysis$specificities,analysis$sensitivities,type="l",
+     ylab="Sensitivity",xlab="1-Specificity",col="black",lwd=2,
+     main = "ROC Curve for Greater Firearm Fatalities")
+
+abline(a=0,b=1)
+
+```
+
+## Demonstration of Support Vector Classifiers
+Data Citation: We are using a dataset containing features related to heart disease. There are 13 features and the outcome variable is a binary, classification variable indicating the presence of heart disease.
+
+***
+
+### Step 1: Load packages
+
+e1071 contains the svm function. Again, we'll be using caret
+
+```{r packages}
+library(e1071)
+```
+
+##Step 2: Load data and perform minor cleaning, check and recode missings etc.
+1. How to load a flat text file
+2. How to assign column names when none are provided
+3. How to check variable types across the dataframe
+4. How to recode missing indicators, change variable types and explore variable distributions
+
+
+```{r data_prep_svc}
+heart.data <- read.csv("./processed.cleveland.data", header=FALSE)
+
+var.names<-c("age", "sex", "pain_type", "resting_sysbp", "chol", "fast_blsugar_gt120", "rest_ecg", "max_hr", "exerc_angina", "ST_depression", "ST_slope", "vessels_colorflu", "defect", "heart_disease_present")
+
+colnames(heart.data)<-var.names
+str(heart.data)
+
+heart.data <- heart.data %>%
+  mutate_all(~ if_else(. == "?", NA_real_, as.numeric(.))) %>%
+  mutate(defect = as.numeric(defect),
+         vessels_colorflu = as.numeric(vessels_colorflu),
+         outcome = if_else(heart_disease_present == 0, 0, 1),
+         heart_disease_present = NULL,
+         outcome = factor(outcome, levels = c(0, 1), labels = c("HDNotPresent", "HDPresent")))
+
+str(heart.data)
+summary(heart.data)
+
+#Remove the missings
+heart.data.nomiss <- heart.data %>%
+  na.omit()
+
+#Set No Heart Disease as Reference Level
+
+heart.data.nomiss <- heart.data.nomiss %>%
+  mutate(outcome = fct_relevel(outcome, "HDNotPresent"))
+
+
+```
+
+### Step 3: Partition data into training and testing
+
+```{r datapart_svc}
+set.seed(123)
+
+train.indices <- heart.data.nomiss %>%
+  pull(outcome) %>%
+  createDataPartition(p = 0.7, list = FALSE)
+
+train.data <- heart.data.nomiss %>%
+  slice(train.indices)
+
+test.data <- heart.data.nomiss %>%
+  slice(-train.indices)
+```
+
+
+### Train support vector classifier (or support vector machine with linear kernal) in Caret
+
+Caret doesn't automatically tune hyperparameter C. You need to specify values to try.The smaller the value of C, the less misclassification the SVM will accept.
+
+```{r svc}
+modelLookup("svmLinear")
+
+
+set.seed(123)
+
+#Set 10-fold cross-validation. Note if you want predicted probabilities, you need to set class Probs=True
+train_control<-trainControl(method="cv", number=10, classProbs = T)
+
+#Train model. Note we are scaling data
+svm.caret<-train(
+                  outcome ~ ., 
+                  data=train.data, 
+                  method="svmLinear", 
+                  trControl=train_control, 
+                  preProcess=c("center", "scale")
+                  )
+
+svm.caret
+
+#Incorporate different values for cost (C)
+svm.caret.2<-train(
+                    outcome ~ ., 
+                    data=train.data, 
+                    method="svmLinear",  
+                    trControl=train_control, 
+                    preProcess=c("center", "scale"), 
+                    tuneGrid=expand.grid(C=seq(0.001,2, length=30))
+                    )
+
+#Visualize accuracy versus values of C
+plot(svm.caret.2)
+
+#Obtain metrics of accuracy from training
+confusionMatrix(svm.caret.2)
+
+#See information about final model
+svm.caret.2$finalModel
+
+#Make predictions in testset
+svm.pred.test <- svm.caret.2 %>% 
+              predict(test.data)
+
+#Get evaluation metrics from test set
+confusionMatrix(svm.pred.test, test.data$outcome, positive="HDPresent")
+
+#Create ROC Curve for Analysis
+pred.prob <- svm.caret.2 %>% 
+  predict(test.data, type = "prob")
+
+#Create plot of Area under the Receiver Operating Curve (AUROC)
+analysis <- roc(response=test.data$outcome, predictor=pred.prob[,2])
+plot(1-analysis$specificities,analysis$sensitivities,type="l",
+ylab="Sensitivity",xlab="1-Specificity",col="black",lwd=2,
+main = "ROC Curve for Heart Disease Classification")
+abline(a=0,b=1)
+
+
+
+
+```
+
+### Notes about Variable Importance
+Variable Importance for the SVC For SVM classification models, most packages do not have built-in variable importance. The default behavior in caret for SVM is to compute the area under the ROC curve. FROM DOCUMENTATION FOR CARET For classification, ROC curve analysis is conducted on each predictor. For two class problems, a series of cutoffs is applied to the predictor data to predict the class. The sensitivity and specificity are computed for each cutoff and the ROC curve is computed. The trapezoidal rule is used to compute the area under the ROC curve. This area is used as the measure of variable importance. More detail is 
+
+https://topepo.github.io/caret/variable-importance.html
+
+
+```{r}
+varImp(svm.caret.2)
+```
+
