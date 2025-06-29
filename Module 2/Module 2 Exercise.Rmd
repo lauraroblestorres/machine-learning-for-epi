@@ -2,29 +2,102 @@
 title: "Module 2 Exercise"
 author: "Laura Robles-Torres"
 date: "2025-06-29"
-output: html_document
+output:
+  html_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+```{r load_packages, message=TRUE, warning=FALSE}
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+library(ggbiplot)
+library(tidyverse)
+library(dplyr)
+library(stats)
+library(factoextra)
+library(cluster)
 ```
 
-## Including Plots
+### Step 1: Load and Prepare Dataset
 
-You can also embed plots, for example:
+```{r load data}
+# Read data, assign column names, and display structure
+clinic_data = read.csv("./Clinic_GA4.csv", header = TRUE) 
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+clinic_data = 
+  clinic_data |> 
+  janitor::clean_names() |>
+  mutate(across(everything(), ~ifelse(. == "?", NA, .)),
+         age = as.numeric(age),
+         glucose = as.numeric(glucose)
+        ) # Clean data of '?' and convert 'bare_nuclei' to numeric
+
+clinic_data |>
+  filter(if_any(everything(), is.na)) #make sure no missing
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Scaling if necessary
+
+```{r scale}
+#Obtain and compare means and standard deviations across features. na.rm removes the missings
+#We scale for variables to have similar means and SDs
+
+# Calculate column means and standard deviations using tidyverse
+clinic_data |> 
+  summarise_all(mean, na.rm = TRUE) |> 
+  print()
+
+clinic_data |> 
+  summarise_all(sd, na.rm = TRUE) %>%
+  print()
+```
+
+```{r pca}
+set.seed(111)
+
+clinic_pca =
+clinic_data |>
+  na.omit(clinic_data) |> #removes all missing data 
+  prcomp(center = TRUE, scale = TRUE) #pca object
+
+clinic_pca$scale #compare the SDs at scale to the SDs not scaled and check that they are similar 
+
+# Generates scree plot
+fviz_eig(clinic_pca)
+    #you want to explain the most amount of variance with the least amount of PCs. we would like to limit where each component is explaining more than previous component 
+
+#PCA results
+clinic_pca |>
+  summary() 
+```
+
+How many components would you retain in subsequent analyses? What proportion of the total variance do those components explain?
+
+I would probably keep up to four components in this case to explain more than 75% of the variance. 
+
+```{r pca 2}
+# Identify how features loaded on the different components
+clinic_pca$rotation #you also go off the SD -- if its above 1 then it is explaining more than just that one component
+
+#plot this visually
+ggbiplot(clinic_pca) 
+
+ggbiplot(clinic_pca, choices = c(2, 3)) #lets you look at specific PCs (2 and 3) 
+```
+
+What do this scree plot and factor loadings tell us about the data? 
+
+On PCA1, homa, insulin and glucose, and leptin are all pretty highly loading. For PCA2, BMI and leptin are more so. For PCA3, triglycerides are negatively loading the mostly. That component is loading having low triglycerides. 
+
+PC1 → high positive loadings on glucose, insulin, HOMA, and leptin, which suggests PC1 captures overall metabolic / glucose-insulin regulation pattern.
+
+PC2 → BMI is positively loading and adiponectin is negatively loading. Maybe reflects an adiposity vs adiponectin axis.
+
+PC3 → Leptin is negatively loading while triglyceride is positively loading. Suggests a lipid/leptin component.
+
+PC4 → Heavy loading on age and this component is likely dominated by age-related effects. 

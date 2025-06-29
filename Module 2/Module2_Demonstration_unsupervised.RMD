@@ -40,7 +40,7 @@ library(cluster)
 ```
 
 ### Demonstration of Principal Components Analysis
-First, we will utilize breast cancer imaging data. In this demonstration, rather than trying to predict malignancy, we are interested in determining if we can uncover the underlying constructs of the image that are explained by the nine features. In other words, can we reduce the number of features from nine down to some smaller number but still capture the same information. To accomplish this, we will apply principal components analysis to the feature data within the breast cancer dataset.
+First, we will utilize breast cancer imaging data. In this demonstration, rather than trying to predict malignancy, we are interested in determining if we can uncover the underlying constructs of the image that are explained by the nine features. In other words, can we reduce the number of features from nine down to some smaller number but still capture the same information? To accomplish this, we will apply principal components analysis to the feature data within the breast cancer dataset.
 
 ***
 
