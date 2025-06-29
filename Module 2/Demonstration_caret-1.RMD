@@ -1,0 +1,246 @@
+---
+title: "Demonstration of Caret for Machine Learning"
+author: "JAS"
+date: ""
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Overview of the Caret Package
+
+The caret package (Classification And REgression Training) contains a number of functions to streamline the process for creating analytic pipelines for prediction. It calls to other libraries to run algorithms, but provides a seamless and uniform interface for working with different algorithms.
+
+Primary functionalities of caret include:
+
+* pre-processing
+* data splitting
+* feature selection
+* model tuning using resampling
+* variable importance estimation
+
+***
+
+Helpful resources using caret:
+
+Max Kuhn's explainer of the caret package
+https://topepo.github.io/caret/model-training-and-tuning.html
+
+Kuhn M. Building predictive models in R using the caret package. Journal of Statistical Software 2008;28(5) doi: 10.18637/jss.v028.i05
+
+Webinar, given by Max Kuhn, available on YouTube (~1 hour): https://www.youtube.com/watch?v=7Jbb2ItbTC4
+
+
+***
+Data Source: UCI Machine Learning Repository, HCV data Dataset
+
+The dataset contains laboratory values of blood donors (control) and Hepatitis C patients with varying levels of liver damage. Created by Lichtinghagen, Klawonn and Hoffmann. Lichtinghagen R et al. J Hepatol 2013; 59: 236-42
+
+
+Attribute Information:
+
+All attributes except Category and Sex are numerical. The laboratory data are the attributes 5-14.
+1) X (Patient ID/No.)
+2) Category (diagnosis) (values: '0=Blood Donor', '0s=suspect Blood Donor', '1=Hepatitis', '2=Fibrosis', '3=Cirrhosis')
+3) Age (in years)
+4) Sex (f,m)
+5) ALB
+6) ALP
+7) ALT
+8) AST
+9) BIL
+10) CHE
+11) CHOL
+12) CREA
+13) GGT
+14) PROT
+
+### Some useful functions for pre-processing outside of the train function
+
+```{r preprocess}
+library(tidyverse)
+library(caret)
+
+# Read in data on liver function study
+
+hepcdata <- read.csv("./hcvdat0.csv")
+
+set.seed(111)
+
+# Make outcome category a factor variable
+hepcdata_clean = 
+  hepcdata |> 
+  mutate(Category = as.factor(Category), 
+         outcome.class = fct_collapse(Category, 
+                                      NED = c("0=Blood Donor", "0s=suspect Blood Donor"), 
+                                      LiverDisease = c("1=Hepatitis", "2=Fibrosis", "3=Cirrhosis"))) |>
+  dplyr::select(-Category, -X) |> #remove patient ID and category variable that was collapsed as outcome.class
+  drop_na()
+```
+
+You didn't need caret for the above. Now we're getting into it. 
+
+```{r preprocess}
+# Finding correlated predictors
+hepc.numeric =
+  hepcdata_clean |> 
+  select_if(is.numeric) #extract all numeric vars
+
+correlations =
+  cor(hepc.numeric, use = "complete.obs")
+
+high_correlations =
+  findCorrelation(correlations, cutoff = 0.4) |> #the output in the environment tells me i have 3 columns with corr >0.5 #findCorrelation is a function within caret package
+  print()
+
+# Remove highly correlated features
+low_corr_data =
+  hepc.numeric[, -high_correlations]
+```
+
+Now I have a new dataset with 3 fewer variables that were highly correlated.
+
+```{r preprocess}
+#Step 1: Centering and Scaling
+set.up.preprocess =
+  preProcess(hepc.numeric, method = c("center", "scale")) 
+
+#Step 2: Feed pre-processed into the predict function for transformed values: output pre-processed values
+transformed_values = 
+  predict(set.up.preprocess, hepc.numeric)
+
+# Creating balanced partitions in the data: how we split data into training and testing
+train.index =
+  createDataPartition(hepcdata_clean$outcome.class, p = 0.7, list = FALSE)
+#if 30% of our population has our target outcome, then both training and testing data also has to have 30%. 
+#the partition is 70/30. 
+#this is using the dataset that is clean, but not all numeric like with the correlation. now we need outcome col. 
+
+hepc.train <- hepcdata_clean[train.index, ] #the train.index is applied to our data and created the training dataset
+hepc.test <- hepcdata_clean[-train.index, ] #here we are applying everything left that is NOT in the train.index vector to my data to make testing data
+
+# Construct k-folds in your data
+train.folds =
+  createFolds(hepcdata_clean$outcome.class, k = 10, list = FALSE)
+```
+
+### Model Training and Tuning
+
+Using the train function to implement your analytic pipeline
+
+```{r models}
+#See what caret can do: caret will show you all the different algorithms you can implement! 
+names(getModelInfo())
+
+modelLookup("bartMachine") #give you info on the model
+modelLookup("adaboost")
+
+#Train Function: used for tuning of hyperparameters and choosing "optimal" model
+
+#Use 'trainControl' Function to set validation method and options (default is bootstrap)
+
+#Perform 10-fold cross-validation
+control.settings<-trainControl(method="cv", number=10) #cv = cross validation
+
+#Perform repeated 10-fold cross-validation
+control.settings.b<-trainControl(method="repeatedcv", number=10, repeats=10)
+
+#Perform sampling to balance data: this ensures the data are balanced between people that have the target outcome and people who do not
+ 
+control.settings.c<-trainControl(method="repeatedcv", number=10, repeats=10, sampling="down") #up is with replacement
+
+#Train function can be used to implement different algorithms using method=
+```
+
+
+```{r models LASSO }
+#Demonstration of LASSO Algorithm using glmnet: 2 hyperparameters but only one varies 
+
+#modelLookup will specify hyperparameters
+
+modelLookup("glmnet")
+
+set.seed(123)
+
+lasso <- train(
+            outcome.class ~.,
+            data = hepc.train,
+            method = "glmnet",
+            preProc=c("center", "scale"),
+            trControl = control.settings.c)
+
+lasso$results #you may want to select the parameters with the highest accuracy 
+
+#Don't depend on defaults for hyperparameters. Add tuning grid for lambda and alpha (but set alpha to 1 for LASSO bc it always is)
+lambda<-10^seq(-3,1, length=100) #creating sequence of values
+lambda.grid<-expand.grid(alpha=1, lambda=lambda) #puts it into the correct format for the train function
+
+#Feed in my lambda grid into tuneGrid: Incorporate tuneGrid into train function 
+set.seed(123)
+lasso.2 <- train(
+              outcome.class ~.,
+              data = hepc.train,
+              method = "glmnet",
+              preProc=c("center", "scale"), #center and scale your data 
+              trControl = control.settings, tuneGrid = lambda.grid) 
+
+#Use plot to visualize tuning
+plot(lasso.2)
+
+#accuracy is higher at lowest values of lambda
+```
+
+
+```{r models LASSO 2}
+#summaryFunction will allow calculation of sensitivity and specificity, classProbs= TRUE will allow the calculation of predicted probabilities
+#you can tune your model based on other things that aren't accuracy! 
+
+control.settings.d<-trainControl(method="repeatedcv", number=10, repeats=5, sampling="down", classProbs = TRUE, summaryFunction = twoClassSummary)
+
+#Incorporate tuneGrid into train function and change evaluation metric to area under ROC curve
+set.seed(123)
+lasso.3 <- train(
+            outcome.class ~.,
+            data = hepc.train,
+            method = "glmnet",
+            preProc=c("center", "scale"),
+            trControl = control.settings.d, 
+            tuneGrid = lambda.grid, metric="ROC") #using area under ROC curve as metric, default was accuracy
+  
+lasso.3$bestTune #this is the best value of lambda
+```
+
+
+```{r models LASSO 3}
+#sometimes you don't want the absolute lowest amount of error. you don't want to OPTIMIZE because there is that trade off between bias and 
+
+#The tolerance function could be used to find a less complex model based on (x-xbest)/xbestx 100, which is #the percent difference. For example, to select parameter values based on a 2% loss of performance:
+
+whichTwoPct <- tolerance(
+                  lasso.3$results,
+                  metric = "ROC", 
+                         tol = 2, 
+                  maximize = TRUE) 
+
+lasso.3$results[whichTwoPct,1:6]
+
+
+```
+
+### Model Evaluation: Once you have your final model (lasso.3), you want to be able to apply it to your test data.
+
+```{r eval}
+test.outcome <-
+  hepc.test |>
+  select(-outcome.class)|>
+  mutate(predicted = predict(lasso.3, newdata =   hepc.test))
+
+confusionMatrix(test.outcome$predicted, hepc.test$outcome.class, positive = "LiverDisease")
+
+```
+
+I got this model that I learned, I'm applying to my test data. I can take the predicteds from that new object and compare to the original data to get my predictions. 

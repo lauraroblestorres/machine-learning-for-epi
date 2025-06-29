@@ -23,6 +23,7 @@ library(factoextra)
 library(cluster)
 ```
 
+#### Principal Component Analysis 
 ### Step 1: Load and Prepare Dataset
 
 ```{r load data}
@@ -101,3 +102,77 @@ PC2 → BMI is positively loading and adiponectin is negatively loading. Maybe r
 PC3 → Leptin is negatively loading while triglyceride is positively loading. Suggests a lipid/leptin component.
 
 PC4 → Heavy loading on age and this component is likely dominated by age-related effects. 
+
+#### K-means cluster analysis of crime in the US 
+
+The built-in R dataset USArrests includes the crime statistics for each of the 50 US states in 1973. Incidence of arrest, per 100,000 residents for assault, murder and rape are included along with the proportion of the population that lives in urban communities.
+
+Goal: identify clusters of states based on their crime stats using k-means cluster analysis
+
+
+### Step 1: Load data and prepare for analysis
+```{r data load 2}
+
+# Load built-in R dataset
+arrests = USArrests
+
+#Is scaling necessary? Lets look at the means and standard deviations of each column. 
+
+# Check means and SDs to determine if scaling is necessary. In general, we always scale. You want similar means and similar SDs. 
+arrests |> 
+  summarise_all(mean, na.rm = TRUE) %>%
+  print()
+
+arrests |> 
+  summarise_all(sd, na.rm = TRUE) %>%
+  print()
+
+#They do not have similar means or SDs. So we do need to scale! 
+
+scaled_arrests =
+  arrests |> 
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
+```
+
+
+### Step 2: Conduct a clustering analysis using k-means clustering
+We can use the kmeans function in order to identify clusters within the data, based on the three variables.
+```{r}
+set.seed(100)
+
+#Generate elbow plot to get a sense of what the optimal number of clusters may be. But...where's the elbow? 
+fviz_nbclust(scaled_arrests, kmeans, method="wss")
+  
+#Conduct a gap statistic analysis to determine optimal number of clusters
+set.seed(100)
+gap_stat = 
+  clusGap(scaled_arrests, FUN=kmeans, nstart=25, K.max=7, B=50) |>  #the nstart tells it to do this 25 times and then                pick the clusters out of that so you avoid the first choice of where clusters choice of being       overinfluential. can be 15 or 25 usually. 
+  #specified k.max = 7 based on the elbow plot, after 7 clusters, not much variance seen.
+  #specified b = 50: numbers of bootstraps to create that null distribution, you want it between 100-200 usually. you want a really stable null distribution to compare your results to
+  print(method="firstmax") #first max: the place where the test statistic is the maximum the very first time 
+
+#at k = 4, the gap statistic reaches its maximum = 0.285
+
+output = 
+  data.frame(gap_stat$Tab) |>
+  print() #store output of gap statistic analysis as a data frame
+
+max.gap = 
+  which.max(output$gap) |>
+  print()
+
+fviz_gap_stat(gap_stat) #confirms optimal is 4
+
+clusters.max_gap =
+  kmeans(scaled_arrests, max.gap, nstart =25) |>
+  print() #running the actual object, almost like a summary. It tells you the number of clusters, size of each cluster, the cluster means, etc. Remember this is scaled.
+
+fviz_cluster(clusters.max_gap, data=scaled_arrests)
+```
+
+Cluster 1: High rates of all crimes and high urban population.(1.27)
+Cluster 2: Low rates of all crimes and low urban population (-0.96)
+Cluster 3: Lower rates of all crimes and medium urban population (0.57)
+Cluster 4: High rates of all crimes but low urban population (0.0)
+
+#Remember, this are interpreted as scaled numbers, so between -1 and 1. If above 1, it is above average. If below 0 then it is below average. 
