@@ -1,0 +1,354 @@
+---
+title: "Exercise 3_1"
+author: "JAS"
+date: " "
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exercise for Module 3: Comparison between CaRT, SVC and Logistic Regression
+
+Yu et al utilized NHANES data from 1999-2004 to predict diabetes and pre-diabetes using Support Vector Machines. You will conduct a similar analysis using data within the NHANES package in R. For this exercise, you will try to predict Diabetes using similar (although not all) variables. The available data is also slightly different, so you likely won't get the same answers. 
+
+For this exercise, you will:
+
+Construct a Classification Tree, a Support Vector Classifier (SVM with a linear kernal) and a logistic regression model using the features in the final dataset.You will compare their performance and then calculate final accuracy in a test set for the model you determine to be the more appropriate model.
+
+***
+
+The code below will load the data and process it. This means:
+
+1. Examine balance in the outcome to see if you need to use sampling procedures (either within caret or external through programming) to balance the data.
+2. Subsetting the data to only include the relevent features
+3. Removing duplicate observations and observations with missing values
+4. Convert factor variables into dummy variables. (Necessary if you use the e1071 package but not if you use caret)
+
+
+NOTE: You need to enter the code to partition the data into training/testing. 
+
+```{r data_prep}
+library(lattice)
+library(NHANES)
+library(dplyr)
+library(caret)
+library(glmnet)
+library(tidyverse)
+library(rpart.plot)
+library(e1071)
+library(Amelia)
+
+set.seed(100)
+
+data ("NHANES")
+
+#Examine balance in data. Remember if data are imbalanced, performance of the algorithm can be greatly affected. Either use sampling option as demonstration with the caret package or you can code your own sampling (e.g. choose a random sample of the non-cases to match the number of cases). 
+
+table(NHANES$Diabetes)
+control.settings<-trainControl(method="repeatedcv", number=10, repeats=10, sampling="down") #up is with replacement
+
+#Restrict to specific variables specified in assignment
+
+keep.var<-names(NHANES) %in% c("Age", "Race1", "Education", "HHIncome", "Weight", "Height", "Pulse", "Diabetes", "BMI", "PhysActive", "Smoke100")
+
+NHANES.subset<-NHANES[keep.var]
+
+#Examine features
+str(NHANES.subset)
+
+#Remove duplicates
+NHANES.subset<-unique(NHANES.subset)
+
+#Examine missingness
+missmap(NHANES.subset)
+
+#For purposes of this assignment, can just remove missings so all models are the same
+NHANES.subset<-na.omit(NHANES.subset)
+
+#Partition data 
+set.seed(100)
+  
+train.indices =
+  NHANES.subset |>
+  pull(Diabetes) |>
+  createDataPartition(p = 0.7, list = FALSE)
+
+train.data =
+  NHANES.subset |>
+  slice(train.indices)
+
+test.data =
+  NHANES.subset |>
+  slice(-train.indices)
+```
+
+```{r logistic regression}
+set.seed(100)
+
+control.settings<-trainControl(method="repeatedcv", 
+                               number=10, 
+                               repeats=10, 
+                               sampling="down", #up is with replacement
+                               classProbs = TRUE,
+                              summaryFunction = twoClassSummary) 
+
+# Tune over a grid: alpha = 1 for Lasso
+grid <- expand.grid(
+  alpha = 1,                 # pure Lasso
+  lambda = seq(0.0001, 1, length = 20)  # regularization strength
+)
+
+lasso <- train(
+            Diabetes ~.,
+            data = train.data,
+            method = "glmnet",
+            preProc=c("center", "scale"),
+            trControl = control.settings,
+            tuneGrid = grid,     # alpha = 1, lambda = seq(...)
+            metric = "ROC")
+
+lasso$results #you may want to select the parameters with the highest accuracy 
+lasso$bestTune         
+
+plot(lasso)
+
+# Coefficients at best lambda
+coef(lasso$finalModel, s = lasso$bestTune$lambda)
+
+test.Diabetes <-
+  test.data |>
+  select(-Diabetes)|>
+  mutate(predicted = predict(lasso, newdata =   test.data))
+
+confusionMatrix(test.Diabetes$predicted, test.data$Diabetes, positive = "Yes") #accuracy is around 74%
+
+```
+
+
+```{r logistic regression}
+#Model 1: Using all features
+model.logreg.1 = 
+  NHANES.subset |>
+  glm(formula=Diabetes~ ., family = binomial(link = 'logit'))
+
+summary(model.logreg.1)
+
+#Model 2: Specifying some features of interest
+model.logreg.2 =
+   NHANES.subset |>
+  glm(formula=Diabetes ~ Race1 + Age + BMI + PhysActive + Smoke100, family = binomial(link = 'logit'))
+
+summary(model.logreg.2)
+```
+
+```{r logistic using caret}
+set.seed(100)
+#Creating 10-fold cross-validation and using down-sampling because of imbalance in data
+train.control.logit<-trainControl(method="cv", number=10, sampling="down")
+#Run it
+logit.caret<-train(Diabetes~., data=train.data,method="glm", family="binomial", trControl=train.control.logit)
+logit.caret$results
+confusionMatrix(logit.caret) #same as SVC with a slightly higher accuracy 
+```
+
+```{r classification tree cart}
+
+set.seed(100)
+#Creating 10-fold cross-validation and using down-sampling because of imbalance in data
+train.control.class<-trainControl(method="cv", number=10, sampling="down")
+
+#Create sequence of cp parameters to try. This grid will be searched by the algorithm while tuning. 
+grid.cp<-expand.grid(cp=seq(0.001, 0.3, by=0.01)) 
+
+#Train model using the grid and the control statements defined above
+tree.diabetes<-train(
+                      Diabetes~., #using Diabetes outcome
+                      data=train.data,
+                      method="rpart", #rpart knows to do class tree and not regression tree bc its a factor
+                      trControl=train.control.class, 
+                      tuneGrid=grid.cp
+                      )
+
+tree.diabetes$bestTune
+tree.diabetes$results
+tree.diabetes #complicated tree if my CP is very small. if you want to interpret it, you can use the varImp
+
+#Note you can obtain variable importance on the final model within training data
+varImp(tree.diabetes)
+
+tree.diabetes$finalModel |>
+  rpart.plot()
+```
+
+```{r cart eval}
+#confusion matrix
+confusionMatrix(tree.diabetes) #Accuracy is 0.68. It does well for both cases and non-cases. Better with no than with yes. 
+```
+```{r evaluation on testing}
+#Create predictions in test set
+pred.diabetes <- tree.diabetes |>
+              predict(test.data)
+
+eval.results<-confusionMatrix(pred.diabetes, test.data$Diabetes, positive = "Yes") #put that into the confusion matrix with the og observed data
+print(eval.results)
+
+    #Sensitivity is higher than the specificity. Acc is around 70%. 
+
+#Create predictions as probabilities on test set. We are going to look at the area under the ROC. We can get predicted probabilities out of the tree-based model.
+pred.diabetes.prob =
+ tree.diabetes |>
+  predict(test.data, type = "prob")
+
+#With those probabilities, you create the ROC 
+#Another potential evaluation: Area under the Receiver Operating Curve (AUROC)
+analysis <- pROC::roc(response=
+                  test.data$Diabetes, 
+                  predictor=pred.diabetes.prob[,2]) #get a list
+
+plot(1-analysis$specificities,analysis$sensitivities,
+     type="l",
+     ylab="Sensitivity",
+     xlab="1-Specificity",
+     col="black",
+     lwd=2,
+     main = "ROC Curve for Diabetes") |> abline(a=0,b=1)
+
+```
+
+### Model 3: Train support vector classifier (or support vector machine with linear kernal) in Caret
+
+Caret doesn't automatically tune hyperparameter C. You need to specify values to try.The smaller the value of C, the less misclassification the SVM will accept.
+```{r svm model constant C}
+
+#Check collinearity of variables
+# Select only numeric variables
+num_vars <- sapply(train.data, is.numeric)
+numeric_data <- train.data[, num_vars]
+
+# Check correlation matrix
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+
+# Identify highly correlated variables (e.g., correlation > 0.5)
+high_corr <- findCorrelation(cor_matrix, cutoff = 0.5) 
+# Get their names
+cols_to_remove <- colnames(numeric_data)[high_corr]
+
+# Drop them from your training and testing data
+train.data.clean <- train.data[, !(names(train.data) %in% cols_to_remove)]
+test.data.clean <- test.data[, !(names(test.data) %in% cols_to_remove)]
+
+set.seed(100)
+
+train_control.svm<-trainControl(method="cv", number=10, sampling = "down") 
+
+#Train model. Note we are scaling data
+svm.caret<-train(
+                  Diabetes ~ ., 
+                  data=train.data, 
+                  method="svmLinear",  #method
+                  trControl=train_control.svm, 
+                  preProcess=c("center", "scale")
+                  )
+
+svm.caret #accuracy 0.88, 2829. says 'Tuning parameter 'C' was held constant at a value of 1'.
+
+confusionMatrix(svm.caret) #specificity is great but sensitivity actually sucks. SVM is not a good model for this. 
+```
+
+```{r svm different C values}
+
+#Incorporate different values for cost (C)
+svm.caret.2<-train(
+                    Diabetes ~ ., 
+                    data=train.data.clean, 
+                    method="svmLinear",  
+                    trControl=train_control.svm, 
+                    preProcess=c("center", "scale"), 
+                    tuneGrid=expand.grid(C=seq(0.1,1, length=15)) #this adds different Cs
+                    )
+
+svm.caret.2
+
+#Visualize accuracy versus values of C
+plot(svm.caret.2)
+
+#Obtain metrics of accuracy from training
+confusionMatrix(svm.caret.2)
+
+#See information about final model
+svm.caret.2$finalModel #70.87 accuracy lower accuracy, but now we see that we are doing a better job at predicting the cases. we got 9.3 of all of the yeses. big difference now in Nos that were predicted to be Yes. We're doing worse on the larger classes of Nos, but better on the target cases of Yes. We are doing worse on the nos. 25% of NOs were guessed as YESES. Much better job at the majority class but better job among the target class (our positives)
+```
+
+```{r eval of svm model 2}
+
+#Make predictions in testset
+svm.pred.test =
+  svm.caret.2 |>
+        predict(test.data.clean)
+
+#Get evaluation metrics from test set
+confusionMatrix(svm.pred.test, test.data.clean$Diabetes, positive="Yes")
+
+#Create ROC Curve for Analysis
+pred.prob =
+  svm.caret.2 |>
+  predict(test.data.clean, type = "prob")
+
+#Create plot of Area under the Receiver Operating Curve (AUROC)
+analysis <- pROC::roc(response=test.data.clean$Diabetes, predictor=pred.prob[,2])
+plot(1-analysis$specificities,analysis$sensitivities,
+     type="l",
+     ylab="Sensitivity",
+     xlab="1-Specificity",
+     col="black",
+     lwd=2,
+     main = "ROC Curve for Diabetes Classification")
+
+```
+
+If you choose accuracy as your method, classification trees are the best method. However, my goal is to identify the CASES. I care mostly about sensitivity than I do in specificity. 
+
+```{r evaluation on testing of cart}
+#Create predictions in test set
+pred.diabetes <- tree.diabetes |>
+              predict(test.data)
+
+eval.results<-confusionMatrix(pred.diabetes, test.data$Diabetes, positive = "Yes") #put that into the confusion matrix with the og observed data
+print(eval.results)
+
+    #Sensitivity is higher than the specificity. Acc is around 70%. 
+
+#Create predictions as probabilities on test set. We are going to look at the area under the ROC. We can get predicted probabilities out of the tree-based model.
+pred.diabetes.prob =
+ tree.diabetes |>
+  predict(test.data, type = "prob")
+
+#With those probabilities, you create the ROC 
+#Another potential evaluation: Area under the Receiver Operating Curve (AUROC)
+analysis <- pROC::roc(response=
+                  test.data$Diabetes, 
+                  predictor=pred.diabetes.prob[,2]) #get a list
+
+plot(1-analysis$specificities,analysis$sensitivities,
+     type="l",
+     ylab="Sensitivity",
+     xlab="1-Specificity",
+     col="black",
+     lwd=2,
+     main = "ROC Curve for Diabetes") |> abline(a=0,b=1)
+
+```
+
+```{r eval of logistic}
+pred.diabetes.logit <- logit.caret |>
+              predict(test.data)
+
+eval.results.logit<-confusionMatrix(pred.diabetes.logit, test.data$Diabetes, positive = "Yes") #put that into the confusion matrix with the og observed data
+print(eval.results.logit)
+
+```
+

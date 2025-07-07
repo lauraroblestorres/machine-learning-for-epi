@@ -269,7 +269,8 @@ library(e1071)
 
 
 ```{r data_prep_svc}
-heart.data <- read.csv("./processed.cleveland.data", header=FALSE)
+
+heart.data <- read.csv(here("./Module 3/processed.cleveland.data"))
 
 var.names<-c("age", "sex", "pain_type", "resting_sysbp", "chol", "fast_blsugar_gt120", "rest_ecg", "max_hr", "exerc_angina", "ST_depression", "ST_slope", "vessels_colorflu", "defect", "heart_disease_present")
 
@@ -292,11 +293,8 @@ heart.data.nomiss <- heart.data %>%
   na.omit()
 
 #Set No Heart Disease as Reference Level
-
 heart.data.nomiss <- heart.data.nomiss %>%
   mutate(outcome = fct_relevel(outcome, "HDNotPresent"))
-
-
 ```
 
 ### Step 3: Partition data into training and testing
@@ -323,22 +321,21 @@ Caret doesn't automatically tune hyperparameter C. You need to specify values to
 ```{r svc}
 modelLookup("svmLinear")
 
-
 set.seed(123)
 
 #Set 10-fold cross-validation. Note if you want predicted probabilities, you need to set class Probs=True
-train_control<-trainControl(method="cv", number=10, classProbs = T)
+train_control<-trainControl(method="cv", number=10, classProbs = T) 
 
 #Train model. Note we are scaling data
 svm.caret<-train(
                   outcome ~ ., 
                   data=train.data, 
-                  method="svmLinear", 
+                  method="svmLinear",  #method
                   trControl=train_control, 
                   preProcess=c("center", "scale")
                   )
 
-svm.caret
+svm.caret #accuracy 0.82, 208 samples. says 'Tuning parameter 'C' was held constant at a value of 1'. 
 
 #Incorporate different values for cost (C)
 svm.caret.2<-train(
@@ -347,7 +344,7 @@ svm.caret.2<-train(
                     method="svmLinear",  
                     trControl=train_control, 
                     preProcess=c("center", "scale"), 
-                    tuneGrid=expand.grid(C=seq(0.001,2, length=30))
+                    tuneGrid=expand.grid(C=seq(0.001,2, length=30)) #this adds different Cs
                     )
 
 #Visualize accuracy versus values of C
@@ -376,9 +373,6 @@ plot(1-analysis$specificities,analysis$sensitivities,type="l",
 ylab="Sensitivity",xlab="1-Specificity",col="black",lwd=2,
 main = "ROC Curve for Heart Disease Classification")
 abline(a=0,b=1)
-
-
-
 
 ```
 
