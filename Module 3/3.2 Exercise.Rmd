@@ -1,0 +1,159 @@
+---
+title: "Exercise 3_2"
+author: "Laura Robles-Torres"
+date: "2025-07-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Exercise 2 for Module 3: Predicting Current Alcohol Consumption from Behavioral Scores
+
+These data were collected as part of an online survey related to drug and alcohol use and personality traits. Individuals answered standardized questions which were used to calculate continuous scores on personality traits. Individuals were also asked about consumption of alcohol and multiple drugs. Further information on this dataset can be found at http://archive.ics.uci.edu/ml/datasets/Drug+consumption+%28quantified%29#.
+
+For the purpose of this exercise, the data has been subset to include only 7 features on personality traits and the variable which distinguishes those who reported current alcohol use (defined as alcohol use in the past month or more frequently) vs no current use. Data are stored in the csv file alcohol_use.csv on the course site.
+ 
+
+```{r data_prep}
+library(lattice)
+library(dplyr)
+library(caret)
+library(glmnet)
+library(tidyverse)
+library(rpart.plot)
+library(e1071)
+library(Amelia)
+```
+
+```{r data_prep}
+# Read data, assign column names, and display structure
+alc_data = read.csv("./alcohol_use.csv", header = TRUE) 
+
+#Check balance of the data 
+table(alc_data$alc_consumption)
+
+#Missingness
+missmap(alc_data)
+
+#Remove ID column and factorize outcome variable
+alc_data =
+  alc_data |>
+  dplyr::select(-X) |>
+  mutate(alc_consumption = factor(alc_consumption)) 
+```
+
+```{r train and test data}
+#Partition data 
+set.seed(100)
+  
+train.indices =
+  alc_data |>
+  pull(alc_consumption) |>
+  createDataPartition(p = 0.7, list = FALSE)
+
+train.data =
+  alc_data |>
+  slice(train.indices)
+
+test.data =
+  alc_data |>
+  slice(-train.indices)
+```
+
+
+```{r classification tree model}
+set.seed(100)
+
+#Creating 10-fold cross-validation and no sampling method since data is balanced
+train.control.class<-trainControl(method="cv", number=10)
+
+#Create sequence of cp parameters to try. This grid will be searched by the algorithm while tuning. 
+grid.cp<-expand.grid(cp=seq(0.01, 0.1, by=0.01)) 
+
+#Train model using the grid and the control statements defined above
+tree.alc<-train(
+                      alc_consumption~., #using outcome
+                      data=train.data,
+                      method="rpart", #rpart knows to do class tree and not regression tree bc its a factor
+                      trControl=train.control.class, 
+                      tuneGrid=grid.cp
+                      )
+
+tree.alc$bestTune
+tree.alc$results
+tree.alc #complicated tree if my CP is very small. if you want to interpret it, you can use the varImp
+
+#Note you can obtain variable importance on the final model within training data
+varImp(tree.alc)
+
+tree.alc$finalModel |>
+  rpart.plot()
+
+confusionMatrix(tree.alc)
+```
+
+Accuracy is 85%. Most importantly, really great sensitivity. 
+
+Let's try logistic regression. 
+
+
+```{r logistic using caret}
+set.seed(100)
+
+#Creating 10-fold cross-validation
+train.control.logit<-trainControl(method="cv", number=10)
+                                  
+#Run it
+logit.caret = 
+  train(alc_consumption~., 
+        data=train.data,
+        method="glm", 
+        family="binomial", 
+        trControl=train.control.logit)
+
+logit.caret$results
+confusionMatrix(logit.caret) 
+```
+
+Accuracy is lower at 80%. Sensitivity is also not as high as with classification trees. Specificity is a bit higher, but not really of interest. 
+
+```{r evaluation on testing of cart}
+#Create predictions in test set
+pred.alc <- tree.alc |>
+              predict(test.data)
+
+eval.results<-confusionMatrix(pred.alc, test.data$alc_consumption, positive = "CurrentUse") #put that into the confusion matrix with the og observed data
+
+print(eval.results)
+```
+
+Accuraacy is 85%. Balanced accuracy is 84%. Sensitivity is 100% perfect. NPV is 1, PPV is .78.
+
+```{r further eval}
+
+#Create predictions as probabilities on test set. We are going to look at the area under the ROC. We can get predicted probabilities out of the tree-based model.
+pred.alc.prob =
+ tree.alc |>
+  predict(test.data, type = "prob")
+
+#With those probabilities, you create the ROC. 
+#Another potential evaluation: Area under the Receiver Operating Curve (AUROC)
+analysis <- pROC::roc(response=
+                  test.data$alc_consumption,
+                  predictor=pred.alc.prob[,2]) #get a list
+
+plot(1-analysis$specificities,analysis$sensitivities,
+     type="l",
+     ylab="Sensitivity",
+     xlab="1-Specificity",
+     col="black",
+     lwd=2,
+     main = "ROC Curve for Alcohol Consumption") |> abline(a=0,b=1)
+
+```
+
+Given the overall higher accuracy and the higher sensitivity of the classification tree model, I chose the classification tree as the best model for predicting current alcohol consumption based on behavioral scores. This research could potentially help tailor alcoholism prevention interventions by focusing on behavioral modifications that address certain traits. It also directly addresses a research question of which personality traits can be predictive of alcohol consumption. 
+

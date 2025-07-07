@@ -21,6 +21,7 @@ library(dplyr)
 library(stats)
 library(factoextra)
 library(cluster)
+library(here)
 ```
 
 #### Principal Component Analysis 
@@ -199,8 +200,9 @@ Goal: You want to predict current alcohol consumption but it is expensive and ti
 I decided to utilize the KNN approach given that all variables are continuous with a classification goal.
 
 ```{r preprocessing}
-set.seed(123)
-alcohol_use <- read.csv("Module 2/alcohol_use.csv")
+set.seed(100)
+
+alcohol_use <- read.csv(here("./Module 3/alcohol_use.csv"))
 
 #Look at features
 str(alcohol_use)
@@ -212,7 +214,8 @@ alcohol_use$X<-NULL
 alcohol_use_clean =
   alcohol_use |>
   mutate(
-    alc_consumption = factor(alc_consumption)) 
+    alc_consumption = factor(alc_consumption)) |>
+  dplyr::select(-X)
 
 #Check distributions, missing data etc.
 summary(alcohol_use_clean)
@@ -240,7 +243,7 @@ test.data =
 We will use 10-fold cross validation to compare 10 different values of k. We will also use under-sampling due to the imbalance of the data.
 
 ```{r models}
-set.seed(123)
+set.seed(100)
 
 #Set control options..using 10-fold cross-validation and using under-sampling ("down") due to unbalanced data
 trnctrl<-trainControl(method="cv", number=10, sampling="down")
@@ -254,7 +257,7 @@ knn.model.1<-train(
                     tuneLength=10) #try 10 different k values 
 
 #Identify optimal number of k
-knn.model.1$bestTune #result: 23
+knn.model.1$bestTune #result: 19
 
 #See full set of results
 knn.model.1$results #accuracy is greatest when k=23
@@ -265,7 +268,7 @@ plot(knn.model.1$results$k, knn.model.1$results$Accuracy, type="l")
 confusionMatrix(knn.model.1) 
 
 #REPEAT using over-sampling due to unbalanced data
-set.seed(123)
+set.seed(100)
 trnctrl<-trainControl(method="cv", number=10, sampling="up")
 
 knn.model.2<-train(
@@ -276,15 +279,18 @@ knn.model.2<-train(
                     preProcess=c("center", "scale"), 
                     tuneLength=10)
 
-knn.model.2$bestTune #result is 23 when you over sample 
+knn.model.2$bestTune #result is 21 when you over sample 
 
 #Create plot of Accuracy vs Choice of K
 plot(knn.model.2$results$k, knn.model.2$results$Accuracy, type="l")
 
-confusionMatrix(knn.model.2) #accuracy is the same with 23
+confusionMatrix(knn.model.2) #accuracy is slightly higher but sensitivites are the same
+```
+
+```{r}
 
 #REPEAT using sequence of k defined by user: you can put in your own k value
-set.seed(123)
+set.seed(100)
 k.vec<-seq(1,30,1)
 knn.model.3<-train(
                     alc_consumption~.  , 
@@ -295,27 +301,13 @@ knn.model.3<-train(
                     tuneGrid=expand.grid(k=k.vec)) #i named my object k.vec above
 
 #Identify optimal number of k
-knn.model.3$bestTune #result is 19 when i set k = 30
+knn.model.3$bestTune #result is 21
 
 #See full set of results
 knn.model.3$results
 
 plot(knn.model.3$results$k, knn.model.3$results$Accuracy, type="l")
 
-confusionMatrix(knn.model.3) #highest accuracy so far by a bit only although not super different
+confusionMatrix(knn.model.3) #no major changes and accuracy lower. sticking with model 1.
 ```
-
-```{r testing_knn}
-### Make predictions in test-set using better model
-
-##Note correction in this version. Changed "new_data" to "newdata" to get predictions on test.data
-model.results.3 <- predict(knn.model.3, newdata = test.data)
-
-test.outcome <- test.data |>
-  dplyr::select(-alc_consumption) |>
-  mutate(predicted = predict(knn.model.3, newdata = test.data)) #make predictions, label them as predicted, add that back into the test.data dataset but in this case replace the outcome.class column so we have predicted vs observed
-
-confusionMatrix(test.outcome$predicted, test.data$alc_consumption, positive="CurrentUse")
-```
-
 
